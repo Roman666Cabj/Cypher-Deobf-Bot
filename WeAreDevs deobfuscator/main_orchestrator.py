@@ -1,8 +1,16 @@
 import sys
+import os
+import json
 import argparse
 from datetime import datetime
-from string_analyzer import StringDecoder, PatternDetector
-from script_processor import ScriptProcessor
+from pathlib import Path
+
+try:
+    from string_analyzer import StringDecoder, PatternDetector
+    from script_processor import ScriptProcessor
+except ImportError:
+    print("Required modules not found.")
+    sys.exit(1)
 
 class AnalysisOrchestrator:
     def __init__(self):
@@ -11,95 +19,66 @@ class AnalysisOrchestrator:
         self.script_processor = ScriptProcessor()
         self.analysis_start = datetime.now()
         
-    def run_file_analysis(self, filepath: str, mode: str = "full") -> Dict:
-        results = {
-            'file': filepath,
-            'analysis_mode': mode,
-            'string_analysis': None,
-            'pattern_detection': None,
-            'execution_analysis': None
-        }
+    def process_files(self, input_path, mode="full"):
+        path = Path(input_path)
+        files = []
         
-        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
+        if path.is_file():
+            files = [str(path)]
+        elif path.is_dir():
+            for file_path in path.rglob('*.lua'):
+                files.append(str(file_path))
         
-        if mode in ["strings", "full"]:
-            results['string_analysis'] = self.string_decoder.process_file(filepath)
-        
-        if mode in ["patterns", "full"]:
-            results['pattern_detection'] = self.pattern_detector.detect(content)
-        
-        if mode in ["execute", "full"]:
-            results['execution_analysis'] = self.script_processor.process_script(filepath)
+        results = []
+        for filepath in files:
+            print(f"Analyzing: {filepath}")
+            result = self.analyze_file(filepath, mode)
+            results.append(result)
         
         return results
     
-    def generate_summary(self, analysis_results: List[Dict]) -> Dict:
-        total_files = len(analysis_results)
-        total_strings = 0
-        total_patterns = 0
+    def analyze_file(self, filepath, mode):
+        try:
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+        except Exception as e:
+            return {'file': filepath, 'error': str(e)}
         
-        for result in analysis_results:
-            if result.get('string_analysis'):
-                total_strings += len(result['string_analysis'].get('strings', []))
-            if result.get('pattern_detection'):
-                total_patterns += len(result['pattern_detection'])
-        
-        return {
-            'total_files': total_files,
-            'total_strings': total_strings,
-            'total_patterns': total_patterns,
-            'analysis_duration': str(datetime.now() - self.analysis_start),
-            'orchestrator_version': '3.0.0'
+        result = {
+            'file': filepath,
+            'size': len(content),
+            'mode': mode
         }
+        
+        if mode in ["strings", "full"]:
+            result['strings'] = self.string_decoder.extract_strings(content)
+        
+        if mode in ["patterns", "full"]:
+            result['patterns'] = self.pattern_detector.scan(content)
+        
+        return result
 
 def main():
-    parser = argparse.ArgumentParser(description="Advanced Lua Script Analysis Framework")
+    parser = argparse.ArgumentParser(description="Lua Analysis Tool")
     parser.add_argument("input", help="Input file or directory")
-    parser.add_argument("--mode", choices=["strings", "patterns", "execute", "full"], 
-                       default="full", help="Analysis mode")
-    parser.add_argument("--output", help="Output report file")
+    parser.add_argument("--mode", choices=["strings", "patterns", "full"], default="full")
+    parser.add_argument("--output", help="Output file")
     
     args = parser.parse_args()
     
+    if not os.path.exists(args.input):
+        print(f"Error: Path '{args.input}' not found")
+        sys.exit(1)
+    
     orchestrator = AnalysisOrchestrator()
+    results = orchestrator.process_files(args.input, args.mode)
     
-    import os
-    files_to_process = []
-    
-    if os.path.isfile(args.input):
-        files_to_process.append(args.input)
-    elif os.path.isdir(args.input):
-        for root, dirs, files in os.walk(args.input):
-            for file in files:
-                if file.endswith('.lua'):
-                    files_to_process.append(os.path.join(root, file))
-    
-    print(f"Processing {len(files_to_process)} file(s)...")
-    
-    all_results = []
-    for filepath in files_to_process:
-        print(f"Analyzing: {filepath}")
-        result = orchestrator.run_file_analysis(filepath, args.mode)
-        all_results.append(result)
-    
-    summary = orchestrator.generate_summary(all_results)
+    print(f"\nProcessed {len(results)} file(s)")
     
     if args.output:
-        import json
-        final_report = {
-            'summary': summary,
-            'detailed_results': all_results
-        }
-        
-        with open(args.output, 'w', encoding='utf-8') as f:
-            json.dump(final_report, f, indent=2, ensure_ascii=False)
-        
-        print(f"Report saved to: {args.output}")
-    
-    print("Analysis complete.")
-    print(f"Duration: {summary['analysis_duration']}")
-    print(f"Files processed: {summary['total_files']}")
+        with open(args.output, 'w') as f:
+            json.dump(results, f, indent=2)
+        print(f"Results saved to {args.output}")
 
 if __name__ == "__main__":
-    main()
+import
