@@ -49,4 +49,4 @@ class ScriptProcessor:
             return {'error': 'Timeout'}
         finally:
             if os.path.exists(temp_path):
-                os.remove(temp_pat
+                os.remove(temp_path) 
