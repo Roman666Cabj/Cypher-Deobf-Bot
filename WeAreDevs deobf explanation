@@ -1,0 +1,27 @@
+Lua Script Deobfuscator
+───────────────────────
+
+What this does:
+• Takes obfuscated Lua scripts (like WeAreDevs ones) and tries to make them readable
+• Shows you what strings are hidden inside
+• Runs scripts in a sandbox so they don't break your computer
+• Points out suspicious patterns
+
+How to use:
+1. Make sure you have Python installed
+2. Run: python main_orchestrator.py your_script.lua
+3. Check the output file it creates
+
+Files:
+• sandbox_engine.lua - runs Lua code safely
+• string_analyzer.py - finds and decodes hidden strings  
+• script_processor.py - runs scripts and gets info
+• main_orchestrator.py - main script you actually run
+
+Why this exists:
+People keep obfuscating Lua scripts and my community wants to deobfuscate, so here you go :) 
+
+Works on:
+• WeAreDevs obfuscated scripts (mostly)
+• Other Lua obfuscation that uses similar tricks
+• Might work on other stuff, no promises
