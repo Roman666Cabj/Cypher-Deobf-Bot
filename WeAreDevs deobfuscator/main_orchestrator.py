@@ -80,4 +80,5 @@ def main():
             json.dump(results, f, indent=2)
         print(f"Results saved to {args.output}")
 
-if __name__ == "__main__":importys
+if __name__ == "__main__":
+    main()
