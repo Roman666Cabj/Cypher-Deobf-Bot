@@ -1,4 +1,3 @@
-# string_analyzer.py
 import re
 
 class StringDecoder:
