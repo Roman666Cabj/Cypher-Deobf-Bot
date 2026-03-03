@@ -1,94 +1,156 @@
+# Cypher Deob Bot
+# Prefijo: $
+
 import discord
 from discord.ext import commands
 import aiohttp
+import re
 import os
 import io
-import time
-
+import sys
+import importlib.util
 from dotenv import load_dotenv
-
-from detector import detect_obfuscator
-from string_resolver import decode_lua_decimal_escapes, resolve_string_tables
-from ast_rebuilder import rebuild_ast
-from pipeline import run_pipeline
-from vm_breaker import detect_vm, break_vm
-
-from Moonsec_V3_Deobfuscator.script_processor import process_script as moonsec_deob
-from Moonsec_V3_Decompiler.decompiler import decompile as moonsec_decompile
-from IronBrew_Deobfuscator.script_processor import process_script as ironbrew_deob
-from WeAreDevs_deobfuscator.script_processor import process_script as wearedevs_deob
-
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
+if not TOKEN:
+    print("ERROR: DISCORD_TOKEN no encontrado")
+    exit(1)
+
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(
-    command_prefix="$",
-    intents=intents,
-    help_command=None
-)
+bot = commands.Bot(command_prefix="$", intents=intents, help_command=None)
 
-MAX_PREVIEW = 3900
+# -----------------------------
+# FIX PATHS (carpetas con espacios)
+# -----------------------------
 
-VIOLET = 0xA855F7
-PURPLE = 0x7C3AED
-EMERALD = 0x10B981
-CYAN = 0x00FFFF
+sys.path.append(os.getcwd())
+sys.path.append("Moonsec V3 Deobfuscator")
+sys.path.append("IronBrew Deobfuscator")
+sys.path.append("WeAreDevs deobfuscator")
 
-START_TIME = time.time()
+# -----------------------------
+# Loader de módulos
+# -----------------------------
 
-
-@bot.event
-async def on_ready():
-    print(f"Cypher Deob Bot conectado como {bot.user}")
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 # -----------------------------
-# Obtener código
+# Cargar deobfuscadores
 # -----------------------------
-async def get_code(ctx, code_or_link=None):
+
+try:
+    moonsec_module = load_module(
+        "moonsec_deob",
+        "Moonsec V3 Deobfuscator/Deobfuscator.py"
+    )
+except:
+    moonsec_module = None
+
+try:
+    ironbrew_module = load_module(
+        "ironbrew_deob",
+        "IronBrew Deobfuscator/main.py"
+    )
+except:
+    ironbrew_module = None
+
+try:
+    wearedevs_module = load_module(
+        "wearedevs_deob",
+        "WeAreDevs deobfuscator/controller_main.py"
+    )
+except:
+    wearedevs_module = None
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
+
+async def get_code(ctx, arg=None):
 
     if ctx.message.attachments:
 
-        att = ctx.message.attachments[0]
+        file = ctx.message.attachments[0]
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(att.url) as resp:
-                return await resp.text()
+            async with session.get(file.url) as r:
+                return await r.text()
 
-    if code_or_link:
+    if arg:
 
-        if code_or_link.startswith("http"):
-
+        if arg.startswith("http"):
             async with aiohttp.ClientSession() as session:
-                async with session.get(code_or_link) as resp:
-                    return await resp.text()
+                async with session.get(arg) as r:
+                    return await r.text()
 
-        return code_or_link
+        return arg
 
-    await ctx.send("Pega código, archivo o link.")
     return None
 
 
-# -----------------------------
-# Enviar resultado
-# -----------------------------
-async def send_result(ctx, title, color, text):
+def detect_obfuscator(code):
 
-    if len(text) > MAX_PREVIEW:
+    if "MoonSec" in code or "moonsec" in code:
+        return "moonsec"
+
+    if "IronBrew" in code or "IB2" in code:
+        return "ironbrew"
+
+    if "Prometheus" in code or "PHASE_BOUNDARY" in code:
+        return "wearedevs"
+
+    if "VM" in code and "BYTECODE" in code:
+        return "vm"
+
+    return "unknown"
+
+
+def beautify(code):
+
+    lines = code.split("\n")
+
+    indent = 0
+    result = []
+
+    for line in lines:
+
+        line = line.strip()
+
+        if line.startswith("end"):
+            indent -= 1
+
+        result.append("    "*max(indent,0)+line)
+
+        if re.search(r"\bthen\b|\bdo\b|\bfunction\b", line):
+            indent += 1
+
+    return "\n".join(result)
+
+
+async def send_result(ctx, title, code):
+
+    if len(code) > 3900:
 
         file = discord.File(
-            io.BytesIO(text.encode()),
+            io.BytesIO(code.encode()),
             filename="deob.lua"
         )
 
         embed = discord.Embed(
             title=title,
             description="Resultado enviado como archivo",
-            color=color
+            color=0xA855F7
         )
 
         await ctx.send(embed=embed, file=file)
@@ -97,208 +159,202 @@ async def send_result(ctx, title, color, text):
 
         embed = discord.Embed(
             title=title,
-            description=f"```lua\n{text}\n```",
-            color=color
+            description=f"```lua\n{code}\n```",
+            color=0xA855F7
         )
 
         await ctx.send(embed=embed)
 
 
 # -----------------------------
-# HELP
+# BOT READY
 # -----------------------------
-@bot.command()
-async def help(ctx):
 
-    embed = discord.Embed(
-        title="🟣 Cypher Deob Bot",
-        description="Advanced Lua Deobfuscation Toolkit",
-        color=VIOLET
-    )
-
-    embed.add_field(
-        name="🔍 Detection",
-        value="`$detect <code/link>`",
-        inline=False
-    )
-
-    embed.add_field(
-        name="🤖 Auto Deob",
-        value="`$deob <code/link>`",
-        inline=False
-    )
-
-    embed.add_field(
-        name="🌙 Moonsec",
-        value="`$moonsec <code/link>`",
-        inline=False
-    )
-
-    embed.add_field(
-        name="⚙ IronBrew",
-        value="`$ironbrew <code/link>`",
-        inline=False
-    )
-
-    embed.add_field(
-        name="🟢 WeAreDevs",
-        value="`$wearedevs <code/link>`",
-        inline=False
-    )
-
-    embed.add_field(
-        name="✨ Beautify",
-        value="`$beautify <code/link>`",
-        inline=False
-    )
-
-    embed.add_field(
-        name="📊 Stats",
-        value="`$stats`",
-        inline=False
-    )
-
-    embed.set_footer(text="Cypher Lua Reverse Toolkit")
-
-    await ctx.send(embed=embed)
+@bot.event
+async def on_ready():
+    print(f"Cypher Deob Bot listo como {bot.user}")
 
 
 # -----------------------------
 # DETECT
 # -----------------------------
-@bot.command()
-async def detect(ctx, *, code_or_link=None):
 
-    code = await get_code(ctx, code_or_link)
+@bot.command()
+async def detect(ctx, *, arg=None):
+
+    code = await get_code(ctx, arg)
 
     if not code:
+        await ctx.send("No se encontró código.")
         return
 
-    code = decode_lua_decimal_escapes(code)
-
-    obf = detect_obfuscator(code)
+    result = detect_obfuscator(code)
 
     embed = discord.Embed(
-        title="Obfuscator Detector",
-        description=f"Detectado: **{obf}**",
-        color=CYAN
+        title="Detector",
+        description=f"Obfuscador detectado: **{result}**",
+        color=0x7C3AED
     )
 
     await ctx.send(embed=embed)
 
 
 # -----------------------------
-# AUTO DEOB
+# BEAUTIFY
 # -----------------------------
-@bot.command()
-async def deob(ctx, *, code_or_link=None):
 
-    code = await get_code(ctx, code_or_link)
+@bot.command()
+async def beautify(ctx, *, arg=None):
+
+    code = await get_code(ctx, arg)
 
     if not code:
         return
 
-    code = decode_lua_decimal_escapes(code)
-    code = resolve_string_tables(code)
+    result = beautify(code)
 
-    if detect_vm(code):
-        code = break_vm(code)
-
-    try:
-
-        result, layers = run_pipeline(code)
-
-        layer_text = " → ".join(layers)
-
-        embed = discord.Embed(
-            title="Auto Deobfuscation",
-            description=f"Layers:\n`{layer_text}`",
-            color=EMERALD
-        )
-
-        await ctx.send(embed=embed)
-
-        await send_result(ctx, "Resultado", EMERALD, result)
-
-    except Exception as e:
-
-        await ctx.send(f"Error: {e}")
+    await send_result(ctx,"Beautify",result)
 
 
 # -----------------------------
 # MOONSEC
 # -----------------------------
+
 @bot.command()
-async def moonsec(ctx, *, code_or_link=None):
+async def moonsec(ctx, *, arg=None):
 
-    code = await get_code(ctx, code_or_link)
+    if not moonsec_module:
+        await ctx.send("Moonsec module no disponible.")
+        return
 
-    stage1 = moonsec_deob(code)
-    result = moonsec_decompile(stage1)
+    code = await get_code(ctx,arg)
 
-    result = rebuild_ast(result)
+    try:
+        result = moonsec_module.deobfuscate(code)
+    except:
+        result = code
 
-    await send_result(ctx, "Moonsec Deob", PURPLE, result)
+    await send_result(ctx,"Moonsec Deobfuscado",result)
 
 
 # -----------------------------
 # IRONBREW
 # -----------------------------
+
 @bot.command()
-async def ironbrew(ctx, *, code_or_link=None):
+async def ironbrew(ctx, *, arg=None):
 
-    code = await get_code(ctx, code_or_link)
+    if not ironbrew_module:
+        await ctx.send("IronBrew module no disponible.")
+        return
 
-    result = ironbrew_deob(code)
+    code = await get_code(ctx,arg)
 
-    result = rebuild_ast(result)
+    try:
+        result = ironbrew_module.main(code)
+    except:
+        result = code
 
-    await send_result(ctx, "IronBrew Deob", VIOLET, result)
+    await send_result(ctx,"IronBrew Deobfuscado",result)
 
 
 # -----------------------------
 # WEAREDEVS
 # -----------------------------
+
 @bot.command()
-async def wearedevs(ctx, *, code_or_link=None):
+async def wearedevs(ctx, *, arg=None):
 
-    code = await get_code(ctx, code_or_link)
+    if not wearedevs_module:
+        await ctx.send("WeAreDevs module no disponible.")
+        return
 
-    result = wearedevs_deob(code)
+    code = await get_code(ctx,arg)
 
-    result = rebuild_ast(result)
+    try:
+        result = wearedevs_module.main(code)
+    except:
+        result = code
 
-    await send_result(ctx, "WeAreDevs Deob", EMERALD, result)
+    await send_result(ctx,"WeAreDevs Deobfuscado",result)
 
 
 # -----------------------------
-# BEAUTIFY
+# AUTO DEOB
 # -----------------------------
+
 @bot.command()
-async def beautify(ctx, *, code_or_link=None):
+async def deob(ctx, *, arg=None):
 
-    code = await get_code(ctx, code_or_link)
+    code = await get_code(ctx,arg)
 
-    result = rebuild_ast(code)
+    if not code:
+        return
 
-    await send_result(ctx, "Beautified Lua", PURPLE, result)
+    obf = detect_obfuscator(code)
+
+    if obf == "moonsec":
+        await moonsec(ctx,arg=code)
+        return
+
+    if obf == "ironbrew":
+        await ironbrew(ctx,arg=code)
+        return
+
+    if obf == "wearedevs":
+        await wearedevs(ctx,arg=code)
+        return
+
+    await ctx.send("No pude detectar el obfuscador.")
 
 
 # -----------------------------
-# STATS
+# HELP
 # -----------------------------
+
 @bot.command()
-async def stats(ctx):
-
-    uptime = int(time.time() - START_TIME)
+async def help(ctx):
 
     embed = discord.Embed(
-        title="Cypher Bot Stats",
-        color=CYAN
+        title="Cypher Deob Bot",
+        color=0xA855F7
     )
 
-    embed.add_field(name="Uptime", value=f"{uptime}s")
-    embed.add_field(name="Commands", value="detect / deob / moonsec / ironbrew / wearedevs")
+    embed.add_field(
+        name="$detect",
+        value="Detecta el obfuscador",
+        inline=False
+    )
+
+    embed.add_field(
+        name="$deob",
+        value="Deobfuscación automática",
+        inline=False
+    )
+
+    embed.add_field(
+        name="$moonsec",
+        value="Deobfuscador Moonsec",
+        inline=False
+    )
+
+    embed.add_field(
+        name="$ironbrew",
+        value="Deobfuscador IronBrew",
+        inline=False
+    )
+
+    embed.add_field(
+        name="$wearedevs",
+        value="Deobfuscador Prometheus",
+        inline=False
+    )
+
+    embed.add_field(
+        name="$beautify",
+        value="Formatea código Lua",
+        inline=False
+    )
 
     await ctx.send(embed=embed)
 
