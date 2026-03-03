@@ -1,5 +1,7 @@
+# ============================================
 # Cypher Deob Bot PRO
-# Prefijo $
+# Prefix $
+# ============================================
 
 import discord
 from discord.ext import commands
@@ -7,17 +9,18 @@ import aiohttp
 import re
 import os
 import io
+import inspect
 from dotenv import load_dotenv
 
-# =====================
+# ============================================
 # CONFIG
-# =====================
+# ============================================
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not TOKEN:
-    print("DISCORD_TOKEN no encontrado")
+    print("ERROR: DISCORD_TOKEN no encontrado")
     exit()
 
 intents = discord.Intents.default()
@@ -31,19 +34,22 @@ bot = commands.Bot(
 
 MAX_PREVIEW = 3900
 
+COLOR_MAIN = 0xA855F7
+COLOR_ALT = 0x7C3AED
 
-# =====================
+# ============================================
 # BOT READY
-# =====================
+# ============================================
 
 @bot.event
 async def on_ready():
-    print(f"Cypher Deob Bot activo como {bot.user}")
+    print(f"🟣 Cypher Deob Bot activo como {bot.user}")
+    print("Prefijo: $")
+    print("-" * 40)
 
-
-# =====================
-# CODE FETCH
-# =====================
+# ============================================
+# FETCH CODE
+# ============================================
 
 async def get_code(ctx, arg=None):
 
@@ -67,10 +73,9 @@ async def get_code(ctx, arg=None):
 
     return None
 
-
-# =====================
-# RESULT OUTPUT
-# =====================
+# ============================================
+# SEND RESULT
+# ============================================
 
 async def send_result(ctx, title, code):
 
@@ -85,8 +90,8 @@ async def send_result(ctx, title, code):
 
         embed = discord.Embed(
             title=title,
-            description="Resultado enviado como archivo",
-            color=0xA855F7
+            description="📁 Resultado demasiado largo, enviado como archivo.",
+            color=COLOR_MAIN
         )
 
         await ctx.send(embed=embed, file=file)
@@ -96,15 +101,14 @@ async def send_result(ctx, title, code):
         embed = discord.Embed(
             title=title,
             description=f"```lua\n{code}\n```",
-            color=0xA855F7
+            color=COLOR_MAIN
         )
 
         await ctx.send(embed=embed)
 
-
-# =====================
+# ============================================
 # BEAUTIFY
-# =====================
+# ============================================
 
 def beautify(code):
 
@@ -127,10 +131,9 @@ def beautify(code):
 
     return "\n".join(result)
 
-
-# =====================
+# ============================================
 # DECODERS
-# =====================
+# ============================================
 
 def decode_string_char(code):
 
@@ -142,7 +145,6 @@ def decode_string_char(code):
         ) + '"',
         code
     )
-
 
 def decode_decimal(code):
 
@@ -157,7 +159,6 @@ def decode_decimal(code):
 
     return re.sub(r'\\(\d{1,3})', repl, code)
 
-
 def decode_hex(code):
 
     return re.sub(
@@ -166,10 +167,9 @@ def decode_hex(code):
         code
     )
 
-
-# =====================
+# ============================================
 # VM BREAKER
-# =====================
+# ============================================
 
 def vm_break(code):
 
@@ -193,14 +193,13 @@ def vm_break(code):
 
     return code
 
-
-# =====================
-# TABLE RECONSTRUCTION
-# =====================
+# ============================================
+# STRING TABLE RECONSTRUCTION
+# ============================================
 
 def reconstruct_tables(code):
 
-    table_pattern = r'local\s+(\w+)\s*=\s*\{(.*?)\}'
+    table_pattern = r'local\s+(\w+)\s*=\s*\{([^}]+)\}'
 
     tables = {}
 
@@ -209,49 +208,65 @@ def reconstruct_tables(code):
         name = match.group(1)
         content = match.group(2)
 
-        strings = re.findall(r'"(.*?)"|\'(.*?)\'', content)
+        elements = re.findall(r'"([^"]*)"|\'([^\']*)\'', content)
 
-        decoded = []
+        values = []
 
-        for s1, s2 in strings:
+        for s1, s2 in elements:
 
-            val = s1 if s1 else s2
+            value = s1 if s1 else s2
 
             try:
-                val = bytes(val,"utf8").decode("unicode_escape")
+                value = bytes(value, "utf-8").decode("unicode_escape")
             except:
                 pass
 
-            decoded.append(val)
+            values.append(value)
 
-        tables[name] = decoded
+        tables[name] = values
 
-    for table,values in tables.items():
+    for table, values in tables.items():
 
-        for i,val in enumerate(values):
+        for i, value in enumerate(values):
 
             pattern = rf"{table}\s*\[\s*{i+1}\s*\]"
 
-            code = re.sub(pattern,f'"{val}"',code)
+            code = re.sub(pattern, f'"{value}"', code)
 
-    code = re.sub(table_pattern,"-- removed obfuscation table",code)
+    code = re.sub(table_pattern, "-- removed string table", code)
 
     return code
 
+# ============================================
+# MULTI LAYER DEOB
+# ============================================
 
-# =====================
+def multi_layer_deob(code, passes=4):
+
+    previous = ""
+
+    for _ in range(passes):
+
+        if code == previous:
+            break
+
+        previous = code
+
+        code = decode_string_char(code)
+        code = decode_decimal(code)
+        code = decode_hex(code)
+        code = reconstruct_tables(code)
+        code = vm_break(code)
+
+    return code
+
+# ============================================
 # WEAREDEVS DEOB
-# =====================
+# ============================================
 
 def wearedevs_deob(code):
 
-    code = reconstruct_tables(code)
-
-    code = decode_string_char(code)
-
-    code = decode_decimal(code)
-
-    code = vm_break(code)
+    code = multi_layer_deob(code)
 
     code = re.sub(
         r'if\s+(getfenv|debug\.getinfo|identifyexecutor)[^\n]*',
@@ -261,31 +276,38 @@ def wearedevs_deob(code):
 
     return code
 
-
-# =====================
+# ============================================
 # DETECTOR
-# =====================
+# ============================================
 
 def detect_obfuscator(code):
 
-    if "PHASE_BOUNDARY" in code:
+    code_lower = code.lower()
+
+    if (
+        "wearedevs.net/obfuscator" in code_lower
+        or "phase_boundary" in code_lower
+        or "prometheus" in code_lower
+    ):
         return "wearedevs"
 
-    if "MoonSec" in code:
+    if "moonsec" in code_lower:
         return "moonsec"
 
-    if "IronBrew" in code:
+    if "ironbrew" in code_lower or "ib2" in code_lower:
         return "ironbrew"
 
-    if "LPH!" in code:
+    if "lph!" in code or "luraph" in code_lower:
         return "luraph"
+
+    if "bytecode" in code_lower and "vm" in code_lower:
+        return "vm"
 
     return "unknown"
 
-
-# =====================
+# ============================================
 # COMMANDS
-# =====================
+# ============================================
 
 @bot.command()
 async def detect(ctx, *, arg=None):
@@ -293,19 +315,20 @@ async def detect(ctx, *, arg=None):
     code = await get_code(ctx,arg)
 
     if not code:
-        await ctx.send("No encontré código")
+        await ctx.send("❌ No encontré código.")
         return
 
     obf = detect_obfuscator(code)
 
     embed = discord.Embed(
-        title="Detector",
+        title="🔍 Obfuscator Detector",
         description=f"Detectado: **{obf}**",
-        color=0x7C3AED
+        color=COLOR_ALT
     )
 
     await ctx.send(embed=embed)
 
+# ============================================
 
 @bot.command()
 async def beautify(ctx, *, arg=None):
@@ -317,8 +340,9 @@ async def beautify(ctx, *, arg=None):
 
     result = beautify(code)
 
-    await send_result(ctx,"Beautify",result)
+    await send_result(ctx,"🧹 Beautify Lua",result)
 
+# ============================================
 
 @bot.command()
 async def wearedevs(ctx, *, arg=None):
@@ -332,8 +356,9 @@ async def wearedevs(ctx, *, arg=None):
 
     result = beautify(result)
 
-    await send_result(ctx,"WeAreDevs Deobfuscado",result)
+    await send_result(ctx,"🟢 WeAreDevs Deobfuscated",result)
 
+# ============================================
 
 @bot.command()
 async def deob(ctx, *, arg=None):
@@ -346,55 +371,56 @@ async def deob(ctx, *, arg=None):
     obf = detect_obfuscator(code)
 
     if obf == "wearedevs":
-
         code = wearedevs_deob(code)
 
+    code = multi_layer_deob(code)
     code = beautify(code)
 
-    await send_result(ctx,f"Deobfuscado ({obf})",code)
+    await send_result(ctx,f"⚡ Auto Deob ({obf})",code)
 
-
-# =====================
+# ============================================
 # HELP
-# =====================
+# ============================================
 
 @bot.command()
 async def help(ctx):
 
     embed = discord.Embed(
-        title="Cypher Deob Bot PRO",
-        color=0xA855F7
+        title="🟣 Cypher Deob Bot",
+        description="Advanced Lua Deobfuscation Toolkit",
+        color=COLOR_MAIN
     )
 
     embed.add_field(
-        name="$detect",
-        value="Detecta obfuscador",
+        name="🔍 $detect",
+        value="Detecta el tipo de obfuscador.",
         inline=False
     )
 
     embed.add_field(
-        name="$deob",
-        value="Deob automático",
+        name="⚡ $deob",
+        value="Deobfuscación automática multicapa.",
         inline=False
     )
 
     embed.add_field(
-        name="$wearedevs",
-        value="Deobfuscador Prometheus",
+        name="🟢 $wearedevs",
+        value="Deobfuscador específico para Prometheus / WeAreDevs.",
         inline=False
     )
 
     embed.add_field(
-        name="$beautify",
-        value="Formatea código",
+        name="🧹 $beautify",
+        value="Formatea código Lua para mejor lectura.",
         inline=False
     )
+
+    embed.set_footer(text="Cypher Deob Bot • Lua Reverse Toolkit")
 
     await ctx.send(embed=embed)
 
-
-# =====================
+# ============================================
 # RUN
-# =====================
+# ============================================
 
 bot.run(TOKEN)
