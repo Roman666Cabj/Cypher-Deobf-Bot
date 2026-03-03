@@ -89,10 +89,11 @@ def beautify_code(code: str) -> str:
 # Undo avanzado general
 def advanced_undo(code: str) -> str:
     # string.char + unpack
-    code = re.sub(r'string\.char\s*\(\s*table\.unpack\s*\(\s*\{([\d\s,]+)\}\s*\)\s*\)',
-                  lambda m: f'"{chr(*[int(x.strip()) for x in m.group(1).split(",")])}"', code)
-    code = re.sub(r'string\.char\s*\(\s*([\d, ]+)\s*\)',
-                  lambda m: f'"{chr(*[int(x.strip()) for x in m.group(1).split(",")])}"', code)
+    code = re.sub(
+    r'string\.char\s*\(\s*([^)]+)\s*\)',
+    lambda m: '"' + ''.join(chr(int(n)) for n in re.findall(r'\d+', m.group(1))) + '"',
+    code
+)
 
     # Join split strings
     code = re.sub(r"'([^']*)'\s*\.\.\s*'([^']*)'", r'"\1\2"', code)
@@ -137,7 +138,11 @@ async def moonsec(ctx, *, code_or_link: str = None):
     try:
         # Limpieza típica Moonsec V3: remover junk, undo string ops
         code = re.sub(r'--\[\[.*?\]\]--', '', code, flags=re.DOTALL)  # comentarios largos
-        code = re.sub(r'string\.char\s*\(\s*([^)]+)\s*\)', lambda m: f'"{chr(*map(int, re.findall(r"\d+", m.group(1))))}"', code)
+        code = re.sub(
+    r'string\.char\s*\(\s*([^)]+)\s*\)',
+    lambda m: '"' + ''.join(chr(int(n)) for n in re.findall(r'\d+', m.group(1))) + '"',
+    code
+)
         code = re.sub(r'local\s+\w+\s*=\s*loadstring', '-- loadstring removido', code)
 
         beautified = beautify_code(code)
