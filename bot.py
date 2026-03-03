@@ -106,6 +106,13 @@ async def send_result(ctx, title, code):
 
         await ctx.send(embed=embed)
 
+async def resolve_async(value):
+
+    if inspect.iscoroutine(value):
+        value = await value
+
+    return value
+
 # ============================================
 # BEAUTIFY
 # ============================================
@@ -166,6 +173,37 @@ def decode_hex(code):
         lambda m: str(int(m.group(1),16)),
         code
     )
+
+def decode_reverse(code):
+
+    def repl(m):
+        s = m.group(1)
+        return '"' + s[::-1] + '"'
+
+    return re.sub(
+        r'string\.reverse\(\s*["\']([^"\']+)["\']\s*\)',
+        repl,
+        code
+    )
+
+def decode_concat(code):
+
+    pattern = r'table\.concat\s*\(\s*\{([^}]+)\}\s*\)'
+
+    def repl(match):
+
+        content = match.group(1)
+
+        strings = re.findall(r'"([^"]*)"|\'([^\']*)\'', content)
+
+        result = ""
+
+        for s1, s2 in strings:
+            result += s1 if s1 else s2
+
+        return f'"{result}"'
+
+    return re.sub(pattern, repl, code)
 
 # ============================================
 # VM BREAKER
@@ -241,7 +279,7 @@ def reconstruct_tables(code):
 # MULTI LAYER DEOB
 # ============================================
 
-def multi_layer_deob(code, passes=4):
+def multi_layer_deob(code, passes=5):
 
     previous = ""
 
@@ -255,6 +293,8 @@ def multi_layer_deob(code, passes=4):
         code = decode_string_char(code)
         code = decode_decimal(code)
         code = decode_hex(code)
+        code = decode_reverse(code)
+        code = decode_concat(code)
         code = reconstruct_tables(code)
         code = vm_break(code)
 
@@ -284,6 +324,7 @@ def detect_obfuscator(code):
 
     code_lower = code.lower()
 
+    # WeAreDevs / Prometheus
     if (
         "wearedevs.net/obfuscator" in code_lower
         or "phase_boundary" in code_lower
@@ -291,15 +332,27 @@ def detect_obfuscator(code):
     ):
         return "wearedevs"
 
-    if "moonsec" in code_lower:
+    # MoonSec V3
+    if (
+        "moonsec" in code_lower
+        or re.search(r'local\s+_env', code_lower)
+        or re.search(r'setfenv\(', code_lower)
+    ):
         return "moonsec"
 
-    if "ironbrew" in code_lower or "ib2" in code_lower:
+    # IronBrew / forks
+    if (
+        "ironbrew" in code_lower
+        or "ib2" in code_lower
+        or "aztupbrew" in code_lower
+    ):
         return "ironbrew"
 
-    if "lph!" in code or "luraph" in code_lower:
+    # Luraph
+    if "lph!" in code_lower:
         return "luraph"
 
+    # VM
     if "bytecode" in code_lower and "vm" in code_lower:
         return "vm"
 
@@ -314,9 +367,7 @@ async def detect(ctx, *, arg=None):
 
     code = await get_code(ctx,arg)
 
-    if not code:
-        await ctx.send("❌ No encontré código.")
-        return
+    if not code or len(code.strip()) == 0:
 
     obf = detect_obfuscator(code)
 
@@ -347,23 +398,26 @@ async def beautify(ctx, *, arg=None):
 @bot.command()
 async def wearedevs(ctx, *, arg=None):
 
-    code = await get_code(ctx,arg)
+    code = await get_code(ctx, arg)
 
     if not code:
+        await ctx.send("No se encontró código.")
         return
 
     result = wearedevs_deob(code)
 
+    result = await resolve_async(result)
+
     result = beautify(result)
 
-    await send_result(ctx,"🟢 WeAreDevs Deobfuscated",result)
+    await send_result(ctx, "🟢 WeAreDevs Deobfuscated", result)
 
 # ============================================
 
 @bot.command()
 async def deob(ctx, *, arg=None):
 
-    code = await get_code(ctx,arg)
+    code = await get_code(ctx, arg)
 
     if not code:
         return
@@ -371,12 +425,17 @@ async def deob(ctx, *, arg=None):
     obf = detect_obfuscator(code)
 
     if obf == "wearedevs":
-        code = wearedevs_deob(code)
+        result = wearedevs_deob(code)
+    else:
+        result = code
 
-    code = multi_layer_deob(code)
-    code = beautify(code)
+    result = await resolve_async(result)
 
-    await send_result(ctx,f"⚡ Auto Deob ({obf})",code)
+    result = multi_layer_deob(result)
+
+    result = beautify(result)
+
+    await send_result(ctx, f"⚡ Auto Deob ({obf})", result)
 
 # ============================================
 # HELP
