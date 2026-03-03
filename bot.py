@@ -1,10 +1,11 @@
-# bot.py (o main.py) - Cypher Deob Bot - Prefijo: $
+# bot.py - Cypher Deob Bot - Prefijo: $
 
 import discord
 from discord.ext import commands
 import aiohttp
 import re
 import os
+import io
 from dotenv import load_dotenv
 import datetime
 
@@ -12,7 +13,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not TOKEN:
-    print("ERROR: No encontré DISCORD_TOKEN en .env")
+    print("ERROR: No encontré DISCORD_TOKEN en .env / Variables")
     exit(1)
 
 intents = discord.Intents.default()
@@ -27,6 +28,8 @@ EMERALD = 0x10B981
 ROSE = 0xE11D48
 AMBER = 0xD97706
 CYAN = 0x00FFFF
+
+MAX_PREVIEW = 3900  # Embed description \~4096 (dejamos margen por ```lua)
 
 @bot.event
 async def on_ready():
@@ -47,7 +50,8 @@ async def get_code(ctx, code_or_link: str = None):
                     await ctx.send("No pude descargar el archivo adjunto.")
                     return None
                 return await resp.text(encoding='utf-8')
-    elif code_or_link:
+
+    if code_or_link:
         if code_or_link.startswith(('http://', 'https://')):
             async with aiohttp.ClientSession() as session:
                 async with session.get(code_or_link) as resp:
@@ -55,11 +59,39 @@ async def get_code(ctx, code_or_link: str = None):
                         await ctx.send("Link inválido o no accesible.")
                         return None
                     return await resp.text(encoding='utf-8')
-        else:
-            return code_or_link
-    else:
-        await ctx.send("Pega código Lua, un link o adjunta un archivo.")
-        return None
+        return code_or_link
+
+    await ctx.send("Pega código Lua, un link o adjunta un archivo.")
+    return None
+
+# Enviar resultado sin romper límites de Discord
+async def send_result(ctx, title: str, color: int, code_text: str, notes: str = None, filename: str = "deob.lua"):
+    if code_text is None:
+        await ctx.send("No hay resultado para mostrar.")
+        return
+
+    # Si es demasiado largo, mandar archivo
+    if len(code_text) > MAX_PREVIEW:
+        file = discord.File(io.BytesIO(code_text.encode("utf-8")), filename=filename)
+        embed = discord.Embed(
+            title=title,
+            description="Resultado muy largo, te lo envié como archivo adjunto ✅",
+            color=color
+        )
+        if notes:
+            embed.add_field(name="Notas", value=notes[:1024], inline=False)
+        await ctx.send(embed=embed, file=file)
+        return
+
+    # Si entra, mandar embed normal
+    embed = discord.Embed(
+        title=title,
+        description=f"```lua\n{code_text}\n```",
+        color=color
+    )
+    if notes:
+        embed.add_field(name="Notas", value=notes[:1024], inline=False)
+    await ctx.send(embed=embed)
 
 # Beautify simple pero efectivo
 def beautify_code(code: str) -> str:
@@ -88,12 +120,12 @@ def beautify_code(code: str) -> str:
 
 # Undo avanzado general
 def advanced_undo(code: str) -> str:
-    # string.char + unpack
+    # string.char(...)
     code = re.sub(
-    r'string\.char\s*\(\s*([^)]+)\s*\)',
-    lambda m: '"' + ''.join(chr(int(n)) for n in re.findall(r'\d+', m.group(1))) + '"',
-    code
-)
+        r'string\.char\s*\(\s*([^)]+)\s*\)',
+        lambda m: '"' + ''.join(chr(int(n.strip())) for n in re.findall(r'\d+', m.group(1))) + '"',
+        code
+    )
 
     # Join split strings
     code = re.sub(r"'([^']*)'\s*\.\.\s*'([^']*)'", r'"\1\2"', code)
@@ -128,7 +160,7 @@ def reconstruct_from_log(log_text: str) -> str:
     reconstructed += '\n-- Usa $deob o Grok para reconstrucción completa'
     return reconstructed
 
-# $moonsec - Deobfuscador + intento de decompilación básica para Moonsec V3
+# $moonsec - Deobfuscador + intento de limpieza básica
 @bot.command(name='moonsec')
 async def moonsec(ctx, *, code_or_link: str = None):
     code = await get_code(ctx, code_or_link)
@@ -136,30 +168,31 @@ async def moonsec(ctx, *, code_or_link: str = None):
         return
 
     try:
-        # Limpieza típica Moonsec V3: remover junk, undo string ops
-        code = re.sub(r'--\[\[.*?\]\]--', '', code, flags=re.DOTALL)  # comentarios largos
+        # Limpieza típica Moonsec V3: comentarios largos + string.char
+        code = re.sub(r'--\[\[.*?\]\]--', '', code, flags=re.DOTALL)  # comentarios multilínea
         code = re.sub(
-    r'string\.char\s*\(\s*([^)]+)\s*\)',
-    lambda m: '"' + ''.join(chr(int(n)) for n in re.findall(r'\d+', m.group(1))) + '"',
-    code
-)
+            r'string\.char\s*\(\s*([^)]+)\s*\)',
+            lambda m: '"' + ''.join(chr(int(n.strip())) for n in re.findall(r'\d+', m.group(1))) + '"',
+            code
+        )
         code = re.sub(r'local\s+\w+\s*=\s*loadstring', '-- loadstring removido', code)
 
         beautified = beautify_code(code)
         undone = advanced_undo(beautified)
 
-        embed = discord.Embed(title="Moonsec V3 - Deobfuscado + Decompilación parcial", color=PURPLE)
-        embed.add_field(name="Resultado", value=f"```lua\n{undone[:1900]}\n```", inline=False)
-        embed.add_field(name="Notas", value="Limpieza de junk + undo strings + beautify básico", inline=False)
-        if len(undone) > 1900:
-            embed.add_field(name="Advertencia", value="Resultado truncado (muy largo)", inline=False)
-
-        await ctx.send(embed=embed)
+        await send_result(
+            ctx,
+            title="Moonsec V3 - Procesado",
+            color=PURPLE,
+            code_text=undone,
+            notes="Limpieza de junk + undo strings + beautify básico",
+            filename="moonsec_deob.lua"
+        )
 
     except Exception as e:
         await ctx.send(f"Error: {str(e)}")
 
-# $ironbrew - Deobfuscador para IronBrew
+# $ironbrew - Limpieza básica
 @bot.command(name='ironbrew')
 async def ironbrew(ctx, *, code_or_link: str = None):
     code = await get_code(ctx, code_or_link)
@@ -167,24 +200,30 @@ async def ironbrew(ctx, *, code_or_link: str = None):
         return
 
     try:
-        # Limpieza típica IronBrew: remover VM junk, desempaquetar strings
-        code = re.sub(r'local\s+\w+\s*=\s*loadstring\(game:HttpGet\(".*?"\)\)', '-- IronBrew loader removido', code)
+        code = re.sub(
+            r'local\s+\w+\s*=\s*loadstring\(game:HttpGet\(".*?"\)\)',
+            '-- IronBrew loader removido',
+            code
+        )
         code = re.sub(r'\[\[\s*VM\s*PROTECTED\s*\]\]', '-- VM protected removed', code)
         code = re.sub(r'(\w+)\s*=\s*(\w+)\[(\d+)\]', r'\1 = "\2[\3]" -- IronBrew unpack', code)
 
         beautified = beautify_code(code)
         undone = advanced_undo(beautified)
 
-        embed = discord.Embed(title="IronBrew - Deobfuscado", color=ROSE)
-        embed.add_field(name="Resultado", value=f"```lua\n{undone[:1900]}\n```", inline=False)
-        embed.add_field(name="Notas", value="Removido VM junk + loaders + unpack básico", inline=False)
-
-        await ctx.send(embed=embed)
+        await send_result(
+            ctx,
+            title="IronBrew - Procesado",
+            color=ROSE,
+            code_text=undone,
+            notes="Removido VM junk + loaders + unpack básico",
+            filename="ironbrew_deob.lua"
+        )
 
     except Exception as e:
         await ctx.send(f"Error: {str(e)}")
 
-# $wearedevs - Deobfuscador para WeAreDevs/Prometheus
+# $wearedevs - Limpieza básica
 @bot.command(name='wearedevs')
 async def wearedevs(ctx, *, code_or_link: str = None):
     code = await get_code(ctx, code_or_link)
@@ -192,24 +231,63 @@ async def wearedevs(ctx, *, code_or_link: str = None):
         return
 
     try:
-        # Limpieza típica WeAreDevs/Prometheus
         code = re.sub(r'--\s*PHASE_BOUNDARY[^\n]*\n?', '', code)
-        code = re.sub(r'if\s+(getfenv|debug\.getinfo|synapse|krnl|identifyexecutor)[^\n]*\n?', '-- [ANTI-DEBUG REMOVIDO]\n', code)
+        code = re.sub(
+            r'if\s+(getfenv|debug\.getinfo|synapse|krnl|identifyexecutor)[^\n]*\n?',
+            '-- [ANTI-DEBUG REMOVIDO]\n',
+            code
+        )
         code = re.sub(r'local\s+\w+\s*=\s*getrenv\(\)', '-- getrenv removido', code)
 
         beautified = beautify_code(code)
         undone = advanced_undo(beautified)
 
-        embed = discord.Embed(title="WeAreDevs / Prometheus - Deobfuscado", color=EMERALD)
-        embed.add_field(name="Resultado", value=f"```lua\n{undone[:1900]}\n```", inline=False)
-        embed.add_field(name="Notas", value="Removido phase boundaries + anti-debug + loaders", inline=False)
-
-        await ctx.send(embed=embed)
+        await send_result(
+            ctx,
+            title="WeAreDevs / Prometheus - Procesado",
+            color=EMERALD,
+            code_text=undone,
+            notes="Removido phase boundaries + anti-debug + loaders",
+            filename="wearedevs_deob.lua"
+        )
 
     except Exception as e:
         await ctx.send(f"Error: {str(e)}")
 
-# Comandos existentes ($deob, $beautify, $undo, $reconstruct, $help) ya están en el código anterior
+@bot.command(name="help")
+async def help_command(ctx):
+    embed = discord.Embed(
+        title="🟣 Cypher Deob Bot - Comandos",
+        color=VIOLET
+    )
+
+    embed.add_field(
+        name="$moonsec",
+        value="Procesa scripts tipo Moonsec",
+        inline=False
+    )
+
+    embed.add_field(
+        name="$ironbrew",
+        value="Procesa scripts tipo IronBrew",
+        inline=False
+    )
+
+    embed.add_field(
+        name="$wearedevs",
+        value="Procesa scripts tipo WeAreDevs / Prometheus",
+        inline=False
+    )
+
+    embed.add_field(
+        name="Uso",
+        value="Podés pegar código, mandar archivo (.lua/.txt/.log) o pasar link.",
+        inline=False
+    )
+
+    embed.set_footer(text="Cypher Deob Bot • Prefijo: $")
+
+    await ctx.send(embed=embed)
 
 # Iniciar bot
 bot.run(TOKEN)
