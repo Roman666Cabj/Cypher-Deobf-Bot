@@ -64,6 +64,13 @@ async def get_code(ctx, code_or_link: str = None):
     await ctx.send("Pega código Lua, un link o adjunta un archivo.")
     return None
 
+def decode_lua_decimal_escapes(text: str) -> str:
+    # Convierte \ddd (0-255) en su caracter real
+    def repl(m):
+        n = int(m.group(1))
+        return chr(n) if 0 <= n <= 255 else m.group(0)
+    return re.sub(r'\\(\d{1,3})', repl, text)
+
 # Enviar resultado sin romper límites de Discord
 async def send_result(ctx, title: str, color: int, code_text: str, notes: str = None, filename: str = "deob.lua"):
     if code_text is None:
@@ -176,6 +183,7 @@ async def moonsec(ctx, *, code_or_link: str = None):
             code
         )
         code = re.sub(r'local\s+\w+\s*=\s*loadstring', '-- loadstring removido', code)
+        code = decode_lua_decimal_escapes(code)
 
         beautified = beautify_code(code)
         undone = advanced_undo(beautified)
@@ -207,6 +215,7 @@ async def ironbrew(ctx, *, code_or_link: str = None):
         )
         code = re.sub(r'\[\[\s*VM\s*PROTECTED\s*\]\]', '-- VM protected removed', code)
         code = re.sub(r'(\w+)\s*=\s*(\w+)\[(\d+)\]', r'\1 = "\2[\3]" -- IronBrew unpack', code)
+        code = decode_lua_decimal_escapes(code)
 
         beautified = beautify_code(code)
         undone = advanced_undo(beautified)
@@ -238,6 +247,7 @@ async def wearedevs(ctx, *, code_or_link: str = None):
             code
         )
         code = re.sub(r'local\s+\w+\s*=\s*getrenv\(\)', '-- getrenv removido', code)
+        code = decode_lua_decimal_escapes(code)
 
         beautified = beautify_code(code)
         undone = advanced_undo(beautified)
