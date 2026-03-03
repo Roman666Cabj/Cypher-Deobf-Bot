@@ -74,7 +74,9 @@ async def get_code(ctx, arg=None):
 
 async def send_result(ctx, title, code):
 
-    if len(code) > MAX_PREVIEW:
+    code = str(code)
+
+if len(code) > MAX_PREVIEW:
 
         file = discord.File(
             io.BytesIO(code.encode()),
@@ -326,7 +328,7 @@ async def wearedevs(ctx, *, arg=None):
     if not code:
         return
 
-    result = wearedevs_deob(code)
+    result = await wearedevs_deob(code)
 
     result = beautify(result)
 
